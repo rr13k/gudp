@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "iostream": "cpp"
+    },
+    "cmake.sourceDirectory": "/Users/zhouyuan11/work/pulseHero-udp/gns/lib/GameNetworkingSockets"
+}
