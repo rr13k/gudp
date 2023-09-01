@@ -98,7 +98,8 @@ func NewServerManager(conn *net.UDPConn, options ...Option) (*Server, error) {
 
 		wg: &sync.WaitGroup{},
 
-		rawRecords: make(chan rawRecord),
+		rawRecords:        make(chan rawRecord),
+		reliabilitySystem: *NewReliabilitySystem(1000000),
 	}
 
 	for _, opt := range options {
@@ -174,6 +175,7 @@ func (c *Server) sendReliablePacket(addr *net.UDPAddr, data []byte) error {
 	err = c.sendReliabilityMessgae(addr, reliablePayload)
 	// 处理已发送的数据包，更新相关的状态和数据结构，以及执行一些调试和测试操作
 	c.reliabilitySystem.PacketSent(len(data))
+	fmt.Println("发送回用户的token内容", data)
 	return err
 }
 
@@ -186,8 +188,8 @@ func (s *Server) SetHandler(f HandlerFunc) {
 }
 
 // parseRecord 解析消息返回对应的类型
-func ParseRecord(rec *[]byte) (gudp_protos.MessageType, error) {
-	msg_type := gudp_protos.MessageType(int32((*rec)[0]))
+func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
+	msg_type := gudp_protos.GudpMessageType(int32((*rec)[0]))
 	fmt.Println("msg_type", msg_type)
 	*rec = (*rec)[1:]
 	return msg_type, nil
@@ -210,7 +212,7 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 	}
 
 	switch msg_type {
-	case gudp_protos.MessageType_PING:
+	case gudp_protos.GudpMessageType_PING:
 		fmt.Println("接收ping消息", record)
 		var ping = gudp_protos.Ping{}
 		err := proto.Unmarshal(record, &ping)
@@ -219,10 +221,10 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		}
 		s.handlePingRecord(context.Background(), addr, &ping)
 
-	case gudp_protos.MessageType_PONG:
+	case gudp_protos.GudpMessageType_PONG:
 		fmt.Println("asdad")
 
-	case gudp_protos.MessageType_HANDSHAKEMESSAGE:
+	case gudp_protos.GudpMessageType_HANDSHAKEMESSAGE:
 		fmt.Println("处理握手")
 		var hand = gudp_protos.HandshakeMessage{}
 		err := proto.Unmarshal(record, &hand)
@@ -231,25 +233,31 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		}
 		s.handleHandshakeRecord(context.Background(), addr, &hand)
 
-	case gudp_protos.MessageType_RELIABLEMESSAGE:
+	case gudp_protos.GudpMessageType_RELIABLEMESSAGE:
 		// _reliableMessage := apiMsg.GetReliableMessage()
 		var msg = gudp_protos.ReliableMessage{}
+		fmt.Println("RELIABLEMESSAGE raw:", record)
 		err := proto.Unmarshal(record, &msg)
 		size := len(record)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("error:", err)
 		}
+		// todo: 这里存在问题，如果确认消息丢包，服务端可能接收到多次内容，因为这里没处理消息已被接受情况
+		// 正确的流程应该是，处理前先检查消息是否在本地被确认，以免引传输时确认消息丢失重复处理
+		s.sendRawToParent(addr, msg.GetData())
+		// 返回确认接受消息
 		s.reliabilityPacketReceived(&msg, size, addr)
-		fmt.Println("接收可靠")
 
-	case gudp_protos.MessageType_UNRELIABLEMESSAGE:
+	case gudp_protos.GudpMessageType_UNRELIABLEMESSAGE:
+		var msg = gudp_protos.UnreliableMessage{}
+		_ = proto.Unmarshal(record, &msg)
 		fmt.Println("接收不可靠")
-
+		s.sendRawToParent(addr, msg.GetData())
 	default:
 		fmt.Println("用户自定义消息")
 		// 处理用户发送的消息，将原始数据发送给用户自己解析
 		// 底层不处理session, 没必要，上层自己构建session
-		s.handleCustomRecord(context.Background(), addr, nil)
+		// s.handleCustomRecord(context.Background(), addr, nil)
 	}
 }
 
@@ -258,6 +266,7 @@ func (s *Server) reliabilityPacketReceived(msg *gudp_protos.ReliableMessage, siz
 	fmt.Println("已发送:", len(s.reliabilitySystem.sentQueue), "待确认包:", len(s.reliabilitySystem.pendingAckQueue), "已接收包:", s.reliabilitySystem.recvPackets, "已确认包:", len(s.reliabilitySystem.ackedQueue))
 	// 如果已接收队列中已存在当前序列号的数据包，则不进行处理
 	s.reliabilitySystem.PacketReceived(msg.Seq, size)
+
 	// 这里，只有接收到确认消息时才有用
 	s.reliabilitySystem.ProcessAck(msg.Ack, msg.AckBits)
 	// 当size 为 0 表示收到的客户端确认消息
@@ -271,6 +280,20 @@ func (s *Server) reliabilityPacketReceived(msg *gudp_protos.ReliableMessage, siz
 	}
 	// 在这里对客户端的传递的消息进行确认。在接收时可以根据ack来进行区分是否为确认消息。
 	return size
+}
+
+// 将消息传递给用户响应函数
+func (s *Server) sendRawToParent(addr *net.UDPAddr, bytes []byte) {
+	cl, ok := s.findClientByAddr(addr)
+	if !ok {
+		s.logger.Printf("error while authenticating other type record: %s", ErrClientAddressIsNotRegistered)
+		s.unAuthenticated(addr)
+		return
+	}
+
+	if s.handler != nil {
+		s.handler(cl, bytes)
+	}
 }
 
 func (s *Server) unAuthenticated(addr *net.UDPAddr) {
@@ -571,7 +594,7 @@ func (s *Server) Serve() {
 
 // 发送握手消息
 func (s *Server) sendHandMessgaeToAddr(addr *net.UDPAddr, record []byte) error {
-	_type := byte(gudp_protos.MessageType_HANDSHAKEMESSAGE)
+	_type := byte(gudp_protos.GudpMessageType_HANDSHAKEMESSAGE)
 	recordWithPrefix := append([]byte{_type}, record...)
 	return s.sendSockt(addr, recordWithPrefix)
 }
@@ -598,14 +621,14 @@ func (s *Server) sendSockt(addr *net.UDPAddr, bytes []byte) error {
 
 // 发送可靠消息
 func (s *Server) sendReliabilityMessgae(addr *net.UDPAddr, record []byte) error {
-	_type := byte(gudp_protos.MessageType_RELIABLEMESSAGE)
+	_type := byte(gudp_protos.GudpMessageType_RELIABLEMESSAGE)
 	recordWithPrefix := append([]byte{_type}, record...)
 	return s.sendSockt(addr, recordWithPrefix)
 }
 
 // 发送不可靠消息
 func (s *Server) sendUnreliabilityMessgae(addr *net.UDPAddr, record []byte) error {
-	_type := byte(gudp_protos.MessageType_UNRELIABLEMESSAGE)
+	_type := byte(gudp_protos.GudpMessageType_UNRELIABLEMESSAGE)
 	recordWithPrefix := append([]byte{_type}, record...)
 	return s.sendSockt(addr, recordWithPrefix)
 }

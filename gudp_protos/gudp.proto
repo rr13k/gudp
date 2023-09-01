@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "pulseHero/gudp_protos";
+option go_package = "gudp/gudp_protos";
 
 message api_character {
     string player_id = 1;
@@ -41,8 +41,8 @@ message UnreliableMessage {
 }
 
 // 因godot不支持自定义类型的oneof, 因此消息增加一位通过枚举区分
-enum message_type {
-    TYPE = 0;
+enum gudp_message_type {
+    _GUDP_TYPE = 0;
     PING = 1; 
     PONG = 2;
     HANDSHAKEMESSAGE = 3;

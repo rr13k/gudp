@@ -93,7 +93,8 @@ func (rs *ReliabilitySystem) Reset() {
 
 // 验证收到的包
 func (rs *ReliabilitySystem) PacketSent(size int) {
-	// 判断
+	// todo: 判断 接受到的包是否已存在，如果存在再接收到则报错。需要注意客户端每次序号从0开始，如果重启1次就很容易导致这个问题
+	print("rs.localSequence:", rs.localSequence)
 	if rs.sentQueue.Exists(rs.localSequence) {
 		fmt.Printf("local sequence %d exists\n", rs.localSequence)
 		for i := 0; i < len(rs.sentQueue); i++ {

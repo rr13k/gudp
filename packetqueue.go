@@ -1,6 +1,9 @@
 package gudp
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // packet queue to store information about sent and received packets sorted in
 // sequence order + we define ordering using the "sequenceMoreRecent" function,
@@ -67,7 +70,7 @@ func bitIndexForSequence(sequence, ack, maxSequence uint32) uint32 {
 			panic("assert(ack < 33)")
 		}
 		if maxSequence < sequence {
-			panic("assert(maxSequence >= sequence)")
+			panic(fmt.Sprintf("assert(maxSequence >= sequence) - ( %d < %d)", maxSequence, sequence))
 		}
 		return ack + (maxSequence - sequence)
 	}
