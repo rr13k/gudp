@@ -1,4 +1,4 @@
-package expres
+package expression
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 
 	gudp "github.com/rr13k/gudp"
+
 	"github.com/rr13k/gudp/crypto"
 	"github.com/rr13k/gudp/protos"
 
