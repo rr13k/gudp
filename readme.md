@@ -13,18 +13,53 @@ gudp 为godot game 所实现，提供轻量快速的可靠udp实现, 用户通�
 4. 使用proto作为通用协议
 
 ## 使用方式
-```sh
-# 检查cpp环境是否安装
-g++ --version
 
-# 检查是否安装了 openssl
-openssl version
+```go
 
-# mac安装openssl
-brew install openssl
+package main
 
-# 安装构建需要的ninja
-brew install ninja
+import (
+	"errors"
+	"fmt"
+	"github.com/rr13k/gudp"
+	"google.golang.org/protobuf/proto"
+)
+
+var GudpServer *gudp.Server
+
+func main() {
+	host := "127.0.0.1"
+	port := 12345
+
+	var err error
+
+	udpConn := gudp.CreateUdpConn(host, port)
+	GudpServer, err = gudp.NewServerManager(udpConn)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+    
+	GudpServer.SetHandler(onReceived)
+	go func() { // handling the server errors
+		for {
+			uerr := <-GudpServer.Error
+			if uerr != nil {
+				fmt.Println("Errors on udp server: ", uerr.Error())
+			}
+		}
+	}()
+
+	GudpServer.Serve()
+}
+
+// 当接受到消息触发
+func onReceived(client *gudp.Client, buffer []byte) {
+	fmt.Println("on msg:", buffer)
+	var hi = []byte("hello world~")
+	// 发送可靠消息
+	GudpServer.SendClientMessage(client, hi, true)
+	// 发送不可靠消息
+	GudpServer.SendClientMessage(client, hi, false)
+}
 
 ```
-
