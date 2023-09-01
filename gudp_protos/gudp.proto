@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "pulseHero/gudpProto";
+option go_package = "pulseHero/gudp_protos";
 
 message api_character {
     string player_id = 1;

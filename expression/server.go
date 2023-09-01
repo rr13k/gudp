@@ -9,7 +9,7 @@ import (
 	gudp "github.com/rr13k/gudp"
 
 	"github.com/rr13k/gudp/crypto"
-	"github.com/rr13k/gudp/protos"
+	"github.com/rr13k/gudp/gudp_protos"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -48,16 +48,16 @@ func (m *CustomAuthenticate) Authenticate(ctx context.Context, token []byte) (st
 }
 
 // 收到消息后处理,业务消息可靠性无关, 这里只能接受到用户发送的数据
-func received(id string, buffer []byte) {
+func received(cli *gudp.Client, buffer []byte) {
 	msg := buffer
-	var mych protos.ApiMessage
+	var mych gudp_protos.ApiMessage
 	err := proto.Unmarshal(msg, &mych)
 
 	print("接收到了消息")
 
 	// 这里只处理自身的pb,不理会udp的pb
 	switch mych.NoticeWay.(type) {
-	case *protos.ApiMessage_ReliableMessage:
+	case *gudp_protos.ApiMessage_ReliableMessage:
 		fmt.Println("可靠的udp")
 		_reliableMessage := mych.GetReliableMessage()
 		// 验证校验和
@@ -68,7 +68,7 @@ func received(id string, buffer []byte) {
 		}
 		fmt.Println(receivedChecksum)
 
-	case *protos.ApiMessage_UnreliableMessage:
+	case *gudp_protos.ApiMessage_UnreliableMessage:
 		fmt.Println("不可靠")
 	}
 

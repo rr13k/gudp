@@ -1,7 +1,6 @@
 package gudp
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,10 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rr13k/gudp/protos"
-
 	"github.com/rr13k/gudp/crypto"
 	"github.com/rr13k/gudp/encoding"
+	"github.com/rr13k/gudp/gudp_protos"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -56,28 +54,6 @@ type Server struct {
 	wg                      *sync.WaitGroup    // 用于等待所有并发处理完成
 
 	reliabilitySystem ReliabilitySystem // 用于可靠消息
-}
-
-type Client struct {
-	ID string
-
-	sessionID []byte // Session ID is a secret byte array that indicates the client is already done the handshake process, the client must prepend these bytes into the start of each record body before encryption
-
-	addr *net.UDPAddr // UDP address of the client
-
-	eKey []byte // Client encryption key to decrypt & encrypt a record body with the symmetric encryption algorithm
-
-	lastHeartbeat *time.Time // last time when a record has been received from the client.
-
-	sync.Mutex
-}
-
-// ValidateSessionID compares the client session ID with the given one
-func (c *Client) ValidateSessionID(sessionID []byte) bool {
-	if bytes.Equal(c.sessionID, sessionID) {
-		return true
-	}
-	return false
 }
 
 // custom error types
@@ -182,8 +158,8 @@ func CreateUdpAddr(ip string, port int) (*net.UDPAddr, error) {
 }
 
 // 发送可靠消息
-func (c *Server) SendReliablePacket(addr *net.UDPAddr, data []byte) bool {
-	var reliableMsg = protos.ReliableMessage{}
+func (c *Server) sendReliablePacket(addr *net.UDPAddr, data []byte) error {
+	var reliableMsg = gudp_protos.ReliableMessage{}
 	reliableMsg.Seq = c.reliabilitySystem.LocalSequence()
 	reliableMsg.Ack = c.reliabilitySystem.RemoteSequence()
 	reliableMsg.AckBits = c.reliabilitySystem.GenerateAckBits()
@@ -195,14 +171,14 @@ func (c *Server) SendReliablePacket(addr *net.UDPAddr, data []byte) bool {
 		c.logger.Printf("serverHandshakeVerify proto.Marshal error: %s", err.Error())
 	}
 
-	c.sendReliabilityMessgaeToAddr(addr, reliablePayload)
+	err = c.sendReliabilityMessgae(addr, reliablePayload)
 	// 处理已发送的数据包，更新相关的状态和数据结构，以及执行一些调试和测试操作
 	c.reliabilitySystem.PacketSent(len(data))
-	return true
+	return err
 }
 
 // HandlerFunc is called when a custom message type is received from the client
-type HandlerFunc func(id string, p []byte)
+type HandlerFunc func(client *Client, p []byte)
 
 // SetHandler sets the handler function as a callback to call when a custom record type is received from the client
 func (s *Server) SetHandler(f HandlerFunc) {
@@ -210,8 +186,8 @@ func (s *Server) SetHandler(f HandlerFunc) {
 }
 
 // parseRecord 解析消息返回对应的类型
-func ParseRecord(rec *[]byte) (protos.MessageType, error) {
-	msg_type := protos.MessageType(int32((*rec)[0]))
+func ParseRecord(rec *[]byte) (gudp_protos.MessageType, error) {
+	msg_type := gudp_protos.MessageType(int32((*rec)[0]))
 	fmt.Println("msg_type", msg_type)
 	*rec = (*rec)[1:]
 	return msg_type, nil
@@ -234,30 +210,30 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 	}
 
 	switch msg_type {
-	case protos.MessageType_PING:
+	case gudp_protos.MessageType_PING:
 		fmt.Println("接收ping消息", record)
-		var ping = protos.Ping{}
+		var ping = gudp_protos.Ping{}
 		err := proto.Unmarshal(record, &ping)
 		if err != nil {
 			fmt.Println(err)
 		}
 		s.handlePingRecord(context.Background(), addr, &ping)
 
-	case protos.MessageType_PONG:
+	case gudp_protos.MessageType_PONG:
 		fmt.Println("asdad")
 
-	case protos.MessageType_HANDSHAKEMESSAGE:
+	case gudp_protos.MessageType_HANDSHAKEMESSAGE:
 		fmt.Println("处理握手")
-		var hand = protos.HandshakeMessage{}
+		var hand = gudp_protos.HandshakeMessage{}
 		err := proto.Unmarshal(record, &hand)
 		if err != nil {
 			fmt.Println(err)
 		}
 		s.handleHandshakeRecord(context.Background(), addr, &hand)
 
-	case protos.MessageType_RELIABLEMESSAGE:
+	case gudp_protos.MessageType_RELIABLEMESSAGE:
 		// _reliableMessage := apiMsg.GetReliableMessage()
-		var msg = protos.ReliableMessage{}
+		var msg = gudp_protos.ReliableMessage{}
 		err := proto.Unmarshal(record, &msg)
 		size := len(record)
 		if err != nil {
@@ -266,7 +242,7 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		s.reliabilityPacketReceived(&msg, size, addr)
 		fmt.Println("接收可靠")
 
-	case protos.MessageType_UNRELIABLEMESSAGE:
+	case gudp_protos.MessageType_UNRELIABLEMESSAGE:
 		fmt.Println("接收不可靠")
 
 	default:
@@ -278,7 +254,7 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 }
 
 // 接收到可靠数据包，确认消息为单向的不用反复确认
-func (s *Server) reliabilityPacketReceived(msg *protos.ReliableMessage, size int, addr *net.UDPAddr) int {
+func (s *Server) reliabilityPacketReceived(msg *gudp_protos.ReliableMessage, size int, addr *net.UDPAddr) int {
 	fmt.Println("已发送:", len(s.reliabilitySystem.sentQueue), "待确认包:", len(s.reliabilitySystem.pendingAckQueue), "已接收包:", s.reliabilitySystem.recvPackets, "已确认包:", len(s.reliabilitySystem.ackedQueue))
 	// 如果已接收队列中已存在当前序列号的数据包，则不进行处理
 	s.reliabilitySystem.PacketReceived(msg.Seq, size)
@@ -291,7 +267,7 @@ func (s *Server) reliabilityPacketReceived(msg *protos.ReliableMessage, size int
 		fmt.Println("back ack ->", msg.Seq)
 		data, _ := proto.Marshal(msg)
 		// 发送确认消息给客户端
-		s.sendReliabilityMessgaeToAddr(addr, data)
+		s.sendReliabilityMessgae(addr, data)
 	}
 	// 在这里对客户端的传递的消息进行确认。在接收时可以根据ack来进行区分是否为确认消息。
 	return size
@@ -299,7 +275,7 @@ func (s *Server) reliabilityPacketReceived(msg *protos.ReliableMessage, size int
 
 func (s *Server) unAuthenticated(addr *net.UDPAddr) {
 	payload := composeRecordBytes(UnAuthenticated, s.protosolVersion, []byte{})
-	err := s.sendToAddr(addr, payload)
+	err := s.sendSockt(addr, payload)
 	if err != nil {
 		s.logger.Printf("error while sending UnAuthenticated record to the client: %s", err)
 		return
@@ -346,8 +322,9 @@ func (s *Server) handleCustomRecord(ctx context.Context, addr *net.UDPAddr, r *r
 		return
 	}
 
+	// 将消息传递给用户
 	if s.handler != nil {
-		s.handler(cl.ID, body)
+		s.handler(cl, body)
 	}
 
 	now := time.Now()
@@ -384,7 +361,7 @@ func (s *Server) registerClient(addr *net.UDPAddr, ID string, eKey []byte) (*Cli
 // client must send the HandshakeClientHelloVerify request (same as Hello) with the generated cookie & the token to prove that the sender address is valid
 // server validate the HelloVerify record, then authenticate the client token & if they're valid, generate a session ID, encrypt it & send it back as ServerHello record
 // after client registration, the client must prepend the Session ID before the record body unencrypted bytes, then encrypt them & compose the record
-func (s *Server) handleHandshakeRecord(ctx context.Context, addr *net.UDPAddr, r *protos.HandshakeMessage) {
+func (s *Server) handleHandshakeRecord(ctx context.Context, addr *net.UDPAddr, r *gudp_protos.HandshakeMessage) {
 	// var payload []byte
 
 	// 先不加密，后续在说，开发效率太慢
@@ -461,7 +438,7 @@ func (s *Server) handleHandshakeRecord(ctx context.Context, addr *net.UDPAddr, r
 			return
 		}
 
-		serverHandshakeVerify := &protos.HandshakeMessage{}
+		serverHandshakeVerify := &gudp_protos.HandshakeMessage{}
 		serverHandshakeVerify.SessionId = cl.sessionID
 		serverHandshakeVerify.Timestamp = time.Now().UnixNano() / int64(time.Millisecond)
 		serverHandshakeHelloBytes, _ := proto.Marshal(serverHandshakeVerify)
@@ -485,14 +462,14 @@ func (s *Server) findClientByAddr(addr *net.UDPAddr) (*Client, bool) {
 }
 
 // handlePingRecord handles ping record and sends pong response
-func (s *Server) handlePingRecord(ctx context.Context, addr *net.UDPAddr, r *protos.Ping) {
+func (s *Server) handlePingRecord(ctx context.Context, addr *net.UDPAddr, r *gudp_protos.Ping) {
 	cl, ok := s.findClientByAddr(addr)
 	if !ok {
 		s.logger.Printf("error while authenticating ping record: %s", ErrClientAddressIsNotRegistered)
 		return
 	}
 
-	pong := &protos.Pong{}
+	pong := &gudp_protos.Pong{}
 	pong.ReceivedAt = time.Now().UnixNano()
 	pong.SentAt = time.Now().UnixNano()
 	pong.PingSentAt = r.SentAt
@@ -530,7 +507,6 @@ func (s *Server) clientGarbageCollection() {
 			if s.garbageCollectionTicker != nil {
 				s.garbageCollectionTicker.Stop()
 			}
-			break
 		case <-s.garbageCollectionTicker.C:
 			for _, c := range s.clients {
 				if c.lastHeartbeat != nil && time.Now().After(c.lastHeartbeat.Add(s.heartbeatExpiration)) {
@@ -593,25 +569,45 @@ func (s *Server) Serve() {
 	}
 }
 
-// sendToAddr writes record bytes to the UDP address
-func (s *Server) sendToAddr(addr *net.UDPAddr, record []byte) error {
-	_, err := s.conn.WriteToUDP(record, addr)
-	return err
-}
-
+// 发送握手消息
 func (s *Server) sendHandMessgaeToAddr(addr *net.UDPAddr, record []byte) error {
-	_type := byte(protos.MessageType_HANDSHAKEMESSAGE)
+	_type := byte(gudp_protos.MessageType_HANDSHAKEMESSAGE)
 	recordWithPrefix := append([]byte{_type}, record...)
-	// s.conn.SetDeadline(t)
-	_, err := s.conn.WriteToUDP(recordWithPrefix, addr)
+	return s.sendSockt(addr, recordWithPrefix)
+}
+
+// 将消息发送到指定地址
+func (s *Server) SendMessage(addr *net.UDPAddr, bytes []byte, reliability bool) error {
+	if reliability {
+		return s.sendReliablePacket(addr, bytes)
+	} else {
+		return s.sendUnreliabilityMessgae(addr, bytes)
+	}
+}
+
+// 将消息发送到指定地址
+func (s *Server) SendClientMessage(cli *Client, bytes []byte, reliability bool) error {
+	return s.SendMessage(cli.addr, bytes, reliability)
+}
+
+// 将消息发送到指定地址
+func (s *Server) sendSockt(addr *net.UDPAddr, bytes []byte) error {
+	_, err := s.conn.WriteToUDP(bytes, addr)
 	return err
 }
 
-func (s *Server) sendReliabilityMessgaeToAddr(addr *net.UDPAddr, record []byte) error {
-	_type := byte(protos.MessageType_RELIABLEMESSAGE)
+// 发送可靠消息
+func (s *Server) sendReliabilityMessgae(addr *net.UDPAddr, record []byte) error {
+	_type := byte(gudp_protos.MessageType_RELIABLEMESSAGE)
 	recordWithPrefix := append([]byte{_type}, record...)
-	_, err := s.conn.WriteToUDP(recordWithPrefix, addr)
-	return err
+	return s.sendSockt(addr, recordWithPrefix)
+}
+
+// 发送不可靠消息
+func (s *Server) sendUnreliabilityMessgae(addr *net.UDPAddr, record []byte) error {
+	_type := byte(gudp_protos.MessageType_UNRELIABLEMESSAGE)
+	recordWithPrefix := append([]byte{_type}, record...)
+	return s.sendSockt(addr, recordWithPrefix)
 }
 
 // sends a record byte array to the Client. the record type is prepended to the record body as a byte
@@ -620,7 +616,7 @@ func (s *Server) sendToClient(client *Client, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	return s.sendToAddr(client.addr, payload)
+	return s.sendSockt(client.addr, payload)
 }
 
 // composeRecordBytes composes record bytes, prepend the record header (type & protosol version) to the body
@@ -643,7 +639,7 @@ func CreateUdpConn(host string, port int) *net.UDPConn {
 		os.Exit(1)
 	}
 
-	fmt.Printf("UDP server listening on %s...\n", serverAddr)
+	fmt.Printf("UDP server listening on %s success~\n", serverAddr)
 
 	return conn
 }
