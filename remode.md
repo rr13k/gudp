@@ -1,5 +1,18 @@
-## 构建c++编译环境
+## gudp
 
+## 简介
+
+gudp 为godot game 所实现，提供轻量快速的可靠udp实现, 用户通过简单的函数即可快速搭建可靠的udp服务。
+
+使用mit协议开源，支持通过fork进行贡献。
+
+## 特性
+1. 支持可靠消息、不可靠消息
+2. 支持身份认证
+3. 内置支持重发和心跳检测
+4. 使用proto作为通用协议
+
+## 使用方式
 ```sh
 # 检查cpp环境是否安装
 g++ --version
@@ -15,27 +28,3 @@ brew install ninja
 
 ```
 
-## 开始编译:
-
-```sh
-# 进入编译位置
-mkdir -p gns/lib/GameNetworkingSockets/build && cd gns/lib/GameNetworkingSockets/build
-
-# 构建Ninja生成器配置文件, 其中DCMAKE_INSTALL_PREFIX 用来指定安装路径
-cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/Users/zhouyuan11/work/pulseHero-udp/gns/lib/GameNetworkingSockets/build ..
-
-# 使用ninja进行编译
-ninja
-
-# 编译后进行安装
-sudo ninja install
-```
-
-
-# udp 要保证心跳
-消息要区分为
-Client : 1
-loginVerify: 2
-Server: 3
-Ping: 4
-Pong: 5

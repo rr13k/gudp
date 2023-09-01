@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+option go_package = "pulseHero/gudpProto";
+
+message api_character {
+    string player_id = 1;
+    string scene = 2;
+    string name = 3;
+    string career = 4;
+    int32 level = 5;
+    int64 experience = 6;
+    // Position position = 7;
+}
+
+// 通过proto实现可靠udp
+message ReliableMessage {
+    int32 sequence_number = 1; // 序列号
+    bytes data = 2;
+    uint32 checksum = 3; // 校验码
+    string session_id = 4;
+    uint32 seq = 5;  // 本地序列号
+    uint32 ack  = 6; // 远程序列号
+    uint32 ackBits = 7; //确认位图
+}
+
+// 处理握手进行身份验证,保障连接是有效的
+message HandshakeMessage {
+    bytes cookie = 1;
+    bytes random = 2;
+    bytes key = 3;
+    int64 timestamp = 4;
+    bytes session_id = 5;
+    string clientVersion = 6;
+    bytes extra = 7;
+}
+
+// 不可靠的常规udp
+message UnreliableMessage {
+    bytes data = 1;
+    string session_id = 2;
+}
+
+// 因godot不支持自定义类型的oneof, 因此消息增加一位通过枚举区分
+enum message_type {
+    TYPE = 0;
+    PING = 1; 
+    PONG = 2;
+    HANDSHAKEMESSAGE = 3;
+    UNRELIABLEMESSAGE = 4;
+    RELIABLEMESSAGE = 5;
+}
+
+message api_message {
+    oneof notice_way {
+        Ping ping = 1;
+        Pong pong = 2;
+        HandshakeMessage handshakeMessage = 3;
+        UnreliableMessage unreliableMessage  = 4;
+        ReliableMessage reliableMessage = 5;
+        Mytest mytest= 6;
+    }
+    string namename22 = 7;
+}
+
+message Mytest {
+    string name = 1;
+}
+
+message Ping {
+    int64 sent_at = 1;
+}
+
+message Pong {
+    int64 ping_sent_at = 1;
+    int64 received_at = 2;
+    int64 sent_at = 3;
+}
+
+
+message api_chat {
+    string user_id = 1;
+    string msg = 2;
+
+    oneof notice_way {
+        string email = 3;
+        string phone = 4;
+    }
+    // Position position = 7;
+}
