@@ -1,4 +1,4 @@
-package main
+package gudp
 
 import (
 	"github.com/rr13k/gudp/protos"
