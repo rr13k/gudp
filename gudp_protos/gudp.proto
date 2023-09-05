@@ -48,6 +48,13 @@ enum gudp_message_type {
     HANDSHAKEMESSAGE = 3;
     UNRELIABLEMESSAGE = 4;
     RELIABLEMESSAGE = 5;
+    RPCMESSAGE = 6;
+}
+
+message rpc_message {
+    int32 rpc_id = 1;
+    string method = 2;
+    string bytes = 3;
 }
 
 message api_message {
