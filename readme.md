@@ -66,3 +66,47 @@ func onReceived(client *gudp.Client, buffer []byte) {
 }
 
 ```
+
+## 使用rpc
+
+
+``` go 
+GudpServer, err = gudp.NewServerManager(udpConn)
+if err != nil {
+	fmt.Println(err.Error())
+}
+// NewServerManager连接后,配置rpc结构体
+GudpServer.RegisterRpc(new(rpcs.UdpRpc))
+
+
+// rpcs.go 文件中
+type UdpRpc struct {
+}
+
+// 算数运算请求结构体
+type UdpRpcRequest struct {
+	A int
+	B int
+}
+
+// 算数运算响应结构体
+type UdpRpcResponse struct {
+	Pro int // 乘积
+	Quo int // 商
+	Rem int // 余数
+}
+
+// 基础测试
+func (u *UdpRpc) Multiply(req UdpRpcRequest, res *UdpRpcResponse) error {
+	res.Pro = req.A * req.B
+	fmt.Println("支持了rpc Multiply:", res.Pro)
+	return nil
+}
+
+```
+
+在`gdscript`中使用如下步骤调用并获取返回值
+```js
+var res = await gudpClient.RpcCall("Multiply",{"A":2,"B":3})
+print(res)
+```
