@@ -54,7 +54,7 @@ enum gudp_message_type {
 message rpc_message {
     int32 rpc_id = 1;
     string method = 2;
-    string bytes = 3;
+    bytes bytes = 3;
 }
 
 message api_message {

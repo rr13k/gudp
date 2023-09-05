@@ -2,6 +2,7 @@ package gudp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -54,6 +55,7 @@ type Server struct {
 	wg                      *sync.WaitGroup    // 用于等待所有并发处理完成
 
 	reliabilitySystem ReliabilitySystem // 用于可靠消息
+	rpc               *Rpc
 }
 
 // custom error types
@@ -187,6 +189,16 @@ func (s *Server) SetHandler(f HandlerFunc) {
 	s.handler = f
 }
 
+// 注册rpc
+func (s *Server) RegisterRpc(rcvr any) {
+	// 将结构体拆解为map
+	var err error
+	s.rpc, err = NewRpc(rcvr)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
 // parseRecord 解析消息返回对应的类型
 func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
 	msg_type := gudp_protos.GudpMessageType(int32((*rec)[0]))
@@ -253,6 +265,19 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		_ = proto.Unmarshal(record, &msg)
 		fmt.Println("接收不可靠")
 		s.sendRawToParent(addr, msg.GetData())
+
+	case gudp_protos.GudpMessageType_RPCMESSAGE:
+		var msg = gudp_protos.RpcMessage{}
+		_ = proto.Unmarshal(record, &msg)
+		// todo, 需要更具 rpc_id 检查重复调用
+		fmt.Println("接收到rpc:", msg.RpcId)
+		mtype, argv, replyv := s.rpc.ParseRequestRpc(&msg)
+		s.rpc.Call(mtype, argv, replyv)
+		// 返回rpc结果
+		resp, _ := json.Marshal(replyv.Interface())
+		msg.Bytes = resp
+		resp, _ = proto.Marshal(&msg)
+		s.sendGudpMessage(gudp_protos.GudpMessageType_RPCMESSAGE, addr, resp)
 	default:
 		fmt.Println("用户自定义消息")
 		// 处理用户发送的消息，将原始数据发送给用户自己解析
@@ -619,18 +644,20 @@ func (s *Server) sendSockt(addr *net.UDPAddr, bytes []byte) error {
 	return err
 }
 
-// 发送可靠消息
-func (s *Server) sendReliabilityMessgae(addr *net.UDPAddr, record []byte) error {
-	_type := byte(gudp_protos.GudpMessageType_RELIABLEMESSAGE)
+func (s *Server) sendGudpMessage(gudpMsgType gudp_protos.GudpMessageType, addr *net.UDPAddr, record []byte) error {
+	var _type = byte(gudpMsgType)
 	recordWithPrefix := append([]byte{_type}, record...)
 	return s.sendSockt(addr, recordWithPrefix)
 }
 
+// 发送可靠消息
+func (s *Server) sendReliabilityMessgae(addr *net.UDPAddr, record []byte) error {
+	return s.sendGudpMessage(gudp_protos.GudpMessageType_RELIABLEMESSAGE, addr, record)
+}
+
 // 发送不可靠消息
 func (s *Server) sendUnreliabilityMessgae(addr *net.UDPAddr, record []byte) error {
-	_type := byte(gudp_protos.GudpMessageType_UNRELIABLEMESSAGE)
-	recordWithPrefix := append([]byte{_type}, record...)
-	return s.sendSockt(addr, recordWithPrefix)
+	return s.sendGudpMessage(gudp_protos.GudpMessageType_UNRELIABLEMESSAGE, addr, record)
 }
 
 // sends a record byte array to the Client. the record type is prepended to the record body as a byte
