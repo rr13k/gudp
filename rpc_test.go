@@ -42,12 +42,12 @@ func TestXxx(t *testing.T) {
 
 	var msg = gudp_protos.RpcMessage{
 		Method: "Multiply",
-		Bytes:  udpRpcRequestByte,
+		Data:   udpRpcRequestByte,
 	}
 
 	var mtype = rpc.method[msg.GetMethod()]
 
-	var data = msg.GetBytes()
+	var data = msg.GetData()
 	var argv reflect.Value
 	// Decode the argument value.
 	argIsValue := false // if true, need to indirect before calling.

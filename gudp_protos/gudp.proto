@@ -42,7 +42,7 @@ message UnreliableMessage {
 
 // 因godot不支持自定义类型的oneof, 因此消息增加一位通过枚举区分
 enum gudp_message_type {
-    _GUDP_TYPE = 0;
+    GUDP_TYPE = 0;
     PING = 1; 
     PONG = 2;
     HANDSHAKEMESSAGE = 3;
@@ -54,7 +54,7 @@ enum gudp_message_type {
 message rpc_message {
     int32 rpc_id = 1;
     string method = 2;
-    bytes bytes = 3;
+    bytes data = 3;
 }
 
 message api_message {

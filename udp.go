@@ -275,7 +275,7 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		s.rpc.Call(mtype, argv, replyv)
 		// 返回rpc结果
 		resp, _ := json.Marshal(replyv.Interface())
-		msg.Bytes = resp
+		msg.Data = resp
 		resp, _ = proto.Marshal(&msg)
 		s.sendGudpMessage(gudp_protos.GudpMessageType_RPCMESSAGE, addr, resp)
 	default:

@@ -47,7 +47,7 @@ func (s *Rpc) Call(mtype *methodType, argv, replyv reflect.Value) error {
 // 通过rpc消息解析调用引用类型
 func (s *Rpc) ParseRequestRpc(req *gudp_protos.RpcMessage) (*methodType, reflect.Value, reflect.Value) {
 	var mtype = s.method[req.GetMethod()]
-	var data = req.GetBytes()
+	var data = req.GetData()
 	var argv reflect.Value
 	// Decode the argument value.
 	argIsValue := false // if true, need to indirect before calling.
