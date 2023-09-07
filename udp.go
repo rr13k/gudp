@@ -210,7 +210,7 @@ func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
 // handlerRecord validate & parse incoming bytes to a record instance, then process it depends on the record type
 // all incoming bytes will ignore if it doesn't meet minimum payload size (to prevent process empty or wrong formatted records)
 func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
-	fmt.Println("接收到udp消息...", record)
+	fmt.Println("接收到udp消息...", record, "len:", len(record))
 	if len(record) < s.minimumPayloadSize {
 		s.logger.Println(ErrMinimumPayloadSizeLimit)
 		return
@@ -270,9 +270,16 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		var msg = gudp_protos.RpcMessage{}
 		_ = proto.Unmarshal(record, &msg)
 		// todo, 需要更具 rpc_id 检查重复调用
+		var ctx = context.WithValue(context.Background(), "Addr", addr)
+
 		fmt.Println("接收到rpc:", msg.RpcId)
-		mtype, argv, replyv := s.rpc.ParseRequestRpc(&msg)
-		s.rpc.Call(mtype, argv, replyv)
+		mtype, argv, replyv, err := s.rpc.ParseRequestRpc(&msg)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		s.rpc.Call(ctx, mtype, argv, replyv)
 		// 返回rpc结果
 		resp, _ := json.Marshal(replyv.Interface())
 		msg.Data = resp

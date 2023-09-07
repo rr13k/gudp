@@ -1,6 +1,7 @@
 package gudp
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -47,6 +48,8 @@ func TestXxx(t *testing.T) {
 
 	var mtype = rpc.method[msg.GetMethod()]
 
+	var ctx = context.Background()
+
 	var data = msg.GetData()
 	var argv reflect.Value
 	// Decode the argument value.
@@ -72,5 +75,5 @@ func TestXxx(t *testing.T) {
 		replyv.Elem().Set(reflect.MakeSlice(mtype.ReplyType.Elem(), 0, 0))
 	}
 
-	rpc.Call(mtype, argv, replyv)
+	rpc.Call(ctx, mtype, argv, replyv)
 }

@@ -1,6 +1,7 @@
 package gudp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,13 +28,13 @@ type Rpc struct {
 	method map[string]*methodType // registered methods
 }
 
-func (s *Rpc) Call(mtype *methodType, argv, replyv reflect.Value) error {
+func (s *Rpc) Call(ctx context.Context, mtype *methodType, argv, replyv reflect.Value) error {
 	mtype.Lock()
 	mtype.numCalls++
 	mtype.Unlock()
 	function := mtype.method.Func
 	// Invoke the method, providing a new value for the reply.
-	returnValues := function.Call([]reflect.Value{s.rcvr, argv, replyv})
+	returnValues := function.Call([]reflect.Value{s.rcvr, reflect.ValueOf(ctx), argv, replyv})
 	// RPC 方法的第一个返回值应该是一个错误值（通常是 error 类型）.检查是否出现错误
 	errInter := returnValues[0].Interface()
 	errmsg := ""
@@ -45,8 +46,13 @@ func (s *Rpc) Call(mtype *methodType, argv, replyv reflect.Value) error {
 }
 
 // 通过rpc消息解析调用引用类型
-func (s *Rpc) ParseRequestRpc(req *gudp_protos.RpcMessage) (*methodType, reflect.Value, reflect.Value) {
+func (s *Rpc) ParseRequestRpc(req *gudp_protos.RpcMessage) (*methodType, reflect.Value, reflect.Value, error) {
 	var mtype = s.method[req.GetMethod()]
+
+	if mtype == nil {
+		return nil, reflect.Value{}, reflect.Value{}, errors.New("rpc: unknown method " + req.GetMethod())
+	}
+
 	var data = req.GetData()
 	var argv reflect.Value
 	// Decode the argument value.
@@ -72,7 +78,7 @@ func (s *Rpc) ParseRequestRpc(req *gudp_protos.RpcMessage) (*methodType, reflect
 		replyv.Elem().Set(reflect.MakeSlice(mtype.ReplyType.Elem(), 0, 0))
 	}
 
-	return mtype, argv, replyv
+	return mtype, argv, replyv, nil
 }
 
 func NewRpc(rcvr any) (*Rpc, error) {
@@ -126,14 +132,14 @@ func suitableMethods(typ reflect.Type, logErr bool) map[string]*methodType {
 			continue
 		}
 		// Method needs three ins: receiver, *args, *reply.
-		if mtype.NumIn() != 3 {
+		if mtype.NumIn() != 4 {
 			if logErr {
 				log.Printf("rpc.Register: method %q has %d input parameters; needs exactly three\n", mname, mtype.NumIn())
 			}
 			continue
 		}
 		// First arg need not be a pointer.
-		argType := mtype.In(1)
+		argType := mtype.In(2)
 		if !isExportedOrBuiltinType(argType) {
 			if logErr {
 				log.Printf("rpc.Register: argument type of method %q is not exported: %q\n", mname, argType)
@@ -141,7 +147,7 @@ func suitableMethods(typ reflect.Type, logErr bool) map[string]*methodType {
 			continue
 		}
 		// Second arg must be a pointer.
-		replyType := mtype.In(2)
+		replyType := mtype.In(3)
 		if replyType.Kind() != reflect.Pointer {
 			if logErr {
 				log.Printf("rpc.Register: reply type of method %q is not a pointer: %q\n", mname, replyType)
