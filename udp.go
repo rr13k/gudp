@@ -26,6 +26,18 @@ type rawRecord struct {
 	addr    *net.UDPAddr
 }
 
+type ClientEvent struct {
+	Name   ClientEventName `json:"name"`
+	Client *Client         `json:"client"`
+}
+
+type ClientEventName int
+
+const (
+	ClientEventName_Client_Join ClientEventName = iota
+	ClientEventName_Client_Leave
+)
+
 type Server struct {
 	protosolVersion     [2]byte       // 协议版本(预留字段)
 	readBufferSize      int           // 用于设置读取缓冲区的大小，用于接收传入的字节流。
@@ -41,6 +53,8 @@ type Server struct {
 	symmCrypto  crypto.Symmetric  //用于在成功握手后加密和解密客户端记录的主体部分
 	handler     HandlerFunc       // 用户自定义消息接收处理
 
+	onEvent func(*ClientEvent) // 用户至nEvent会调用
+
 	clients map[string]*Client // 管理已连接的客户端
 
 	Error chan error // 当服务出现错误
@@ -53,6 +67,8 @@ type Server struct {
 	logger                  *log.Logger        // 用于记录日志信息的日志记录器
 	stop                    chan bool          // 用于停止服务器监听的通道
 	wg                      *sync.WaitGroup    // 用于等待所有并发处理完成
+
+	events chan *ClientEvent // 客户端事件，监听客户端加入和退出
 
 	reliabilitySystem ReliabilitySystem // 用于可靠消息
 	rpc               *Rpc
@@ -102,7 +118,12 @@ func NewServerManager(conn *net.UDPConn, options ...Option) (*Server, error) {
 
 		rawRecords:        make(chan rawRecord),
 		reliabilitySystem: *NewReliabilitySystem(1000000),
+
+		events: make(chan *ClientEvent, 1),
 	}
+
+	// 监听事件管理队列
+	go s.eventManager()
 
 	for _, opt := range options {
 		opt(&s)
@@ -199,6 +220,27 @@ func (s *Server) RegisterRpc(rcvr any) {
 	}
 }
 
+func (s *Server) RegisterEvent(eventFunc func(*ClientEvent)) {
+	// 将结构体拆解为map
+	s.onEvent = eventFunc
+}
+
+// 监听事件
+func (s *Server) eventManager() {
+	// 将结构体拆解为map
+	for {
+		select {
+		case a := <-s.events:
+			{
+				fmt.Println("收到事件 a:", a)
+				if s.onEvent != nil {
+					s.onEvent(a)
+				}
+			}
+		}
+	}
+}
+
 // parseRecord 解析消息返回对应的类型
 func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
 	msg_type := gudp_protos.GudpMessageType(int32((*rec)[0]))
@@ -233,9 +275,6 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		}
 		s.handlePingRecord(context.Background(), addr, &ping)
 
-	case gudp_protos.GudpMessageType_PONG:
-		fmt.Println("asdad")
-
 	case gudp_protos.GudpMessageType_HANDSHAKEMESSAGE:
 		fmt.Println("处理握手")
 		var hand = gudp_protos.HandshakeMessage{}
@@ -244,6 +283,8 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 			fmt.Println(err)
 		}
 		s.handleHandshakeRecord(context.Background(), addr, &hand)
+		// 握手的时候无法获取后续的客户端
+		return
 
 	case gudp_protos.GudpMessageType_RELIABLEMESSAGE:
 		// _reliableMessage := apiMsg.GetReliableMessage()
@@ -285,11 +326,15 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		msg.Data = resp
 		resp, _ = proto.Marshal(&msg)
 		s.sendGudpMessage(gudp_protos.GudpMessageType_RPCMESSAGE, addr, resp)
-	default:
-		fmt.Println("用户自定义消息")
-		// 处理用户发送的消息，将原始数据发送给用户自己解析
-		// 底层不处理session, 没必要，上层自己构建session
-		// s.handleCustomRecord(context.Background(), addr, nil)
+	}
+
+	// 每次接收任意消息后, 更新客户端过期时间
+	cl, ok := s.FindClientByAddr(addr)
+	if ok {
+		now := time.Now()
+		cl.Lock()
+		cl.lastHeartbeat = &now
+		cl.Unlock()
 	}
 }
 
@@ -316,7 +361,7 @@ func (s *Server) reliabilityPacketReceived(msg *gudp_protos.ReliableMessage, siz
 
 // 将消息传递给用户响应函数
 func (s *Server) sendRawToParent(addr *net.UDPAddr, bytes []byte) {
-	cl, ok := s.findClientByAddr(addr)
+	cl, ok := s.FindClientByAddr(addr)
 	if !ok {
 		s.logger.Printf("error while authenticating other type record: %s", ErrClientAddressIsNotRegistered)
 		s.unAuthenticated(addr)
@@ -328,6 +373,7 @@ func (s *Server) sendRawToParent(addr *net.UDPAddr, bytes []byte) {
 	}
 }
 
+// 验证地址是否进行过身份认证
 func (s *Server) unAuthenticated(addr *net.UDPAddr) {
 	payload := composeRecordBytes(UnAuthenticated, s.protosolVersion, []byte{})
 	err := s.sendSockt(addr, payload)
@@ -344,48 +390,6 @@ func parseSessionID(p []byte, sLen int) ([]byte, []byte, error) {
 		return nil, nil, ErrInvalidPayloadBodySize
 	}
 	return p[:sLen], p[sLen:], nil
-}
-
-// handleCustomRecord handle custom record with authorizing the record and call the handler func if is set
-func (s *Server) handleCustomRecord(ctx context.Context, addr *net.UDPAddr, r *record) {
-	cl, ok := s.findClientByAddr(addr)
-	if !ok {
-		s.logger.Printf("error while authenticating other type record: %s", ErrClientAddressIsNotRegistered)
-		s.unAuthenticated(addr)
-		return
-	}
-
-	// 解密
-	payload, err := s.symmCrypto.Decrypt(r.Body, cl.eKey)
-	if err != nil {
-		s.logger.Printf("error while decrypting other type record: %s", err)
-		return
-	}
-
-	// 从发送内容中解出session
-	var sessionID, body []byte
-	sessionID, body, err = parseSessionID(payload, len(cl.sessionID))
-	if err != nil {
-		s.logger.Printf("error while parsing session id for ping: %s", err)
-		return
-	}
-
-	// 校验session是否有效
-	if !cl.ValidateSessionID(sessionID) {
-		s.logger.Printf("error while validating client session for other type record: %s", ErrClientSessionNotFound)
-		s.unAuthenticated(addr)
-		return
-	}
-
-	// 将消息传递给用户
-	if s.handler != nil {
-		s.handler(cl, body)
-	}
-
-	now := time.Now()
-	cl.Lock()
-	cl.lastHeartbeat = &now
-	cl.Unlock()
 }
 
 // registerClient generates a new session ID & registers an address with token ID & encryption key as a Client
@@ -507,7 +511,7 @@ func (s *Server) handleHandshakeRecord(ctx context.Context, addr *net.UDPAddr, r
 }
 
 // returns the Client by IP & Port
-func (s *Server) findClientByAddr(addr *net.UDPAddr) (*Client, bool) {
+func (s *Server) FindClientByAddr(addr *net.UDPAddr) (*Client, bool) {
 	cl, ok := s.sessions[fmt.Sprintf("%s_%d", addr.IP.String(), addr.Port)]
 	if !ok {
 		return nil, ok
@@ -518,9 +522,8 @@ func (s *Server) findClientByAddr(addr *net.UDPAddr) (*Client, bool) {
 
 // handlePingRecord handles ping record and sends pong response
 func (s *Server) handlePingRecord(ctx context.Context, addr *net.UDPAddr, r *gudp_protos.Ping) {
-	cl, ok := s.findClientByAddr(addr)
+	cl, ok := s.FindClientByAddr(addr)
 	if !ok {
-		s.logger.Printf("error while authenticating ping record: %s", ErrClientAddressIsNotRegistered)
 		return
 	}
 
@@ -534,16 +537,11 @@ func (s *Server) handlePingRecord(ctx context.Context, addr *net.UDPAddr, r *gud
 		fmt.Println("ping proto.Marshal error:", err)
 	}
 	// 如有必要后续可校验session
-	err = s.sendToClient(cl, pingBytes)
+	err = s.sendGudpMessage(gudp_protos.GudpMessageType_PONG, cl.addr, pingBytes)
 	if err != nil {
 		s.logger.Printf("error while sending pong record: %s", err)
 		return
 	}
-
-	now := time.Now()
-	cl.Lock()
-	cl.lastHeartbeat = &now
-	cl.Unlock()
 }
 
 // incoming bytes are parsed to the record struct
@@ -565,6 +563,11 @@ func (s *Server) clientGarbageCollection() {
 		case <-s.garbageCollectionTicker.C:
 			for _, c := range s.clients {
 				if c.lastHeartbeat != nil && time.Now().After(c.lastHeartbeat.Add(s.heartbeatExpiration)) {
+					_cEvent := &ClientEvent{
+						Name:   ClientEventName_Client_Leave,
+						Client: c,
+					}
+					s.events <- _cEvent
 					delete(s.clients, c.ID)
 					delete(s.sessions, fmt.Sprintf("%s_%d", c.addr.IP.String(), c.addr.Port))
 				}
