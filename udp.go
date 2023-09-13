@@ -244,7 +244,6 @@ func (s *Server) eventManager() {
 // parseRecord 解析消息返回对应的类型
 func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
 	msg_type := gudp_protos.GudpMessageType(int32((*rec)[0]))
-	fmt.Println("msg_type", msg_type)
 	*rec = (*rec)[1:]
 	return msg_type, nil
 }
@@ -252,7 +251,7 @@ func ParseRecord(rec *[]byte) (gudp_protos.GudpMessageType, error) {
 // handlerRecord validate & parse incoming bytes to a record instance, then process it depends on the record type
 // all incoming bytes will ignore if it doesn't meet minimum payload size (to prevent process empty or wrong formatted records)
 func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
-	fmt.Println("接收到udp消息...", record, "len:", len(record))
+	// fmt.Println("接收到udp消息...", record, "len:", len(record))
 	if len(record) < s.minimumPayloadSize {
 		s.logger.Println(ErrMinimumPayloadSizeLimit)
 		return
@@ -267,7 +266,6 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 
 	switch msg_type {
 	case gudp_protos.GudpMessageType_PING:
-		fmt.Println("接收ping消息", record)
 		var ping = gudp_protos.Ping{}
 		err := proto.Unmarshal(record, &ping)
 		if err != nil {
@@ -276,7 +274,6 @@ func (s *Server) handleRecord(record []byte, addr *net.UDPAddr) {
 		s.handlePingRecord(context.Background(), addr, &ping)
 
 	case gudp_protos.GudpMessageType_HANDSHAKEMESSAGE:
-		fmt.Println("处理握手")
 		var hand = gudp_protos.HandshakeMessage{}
 		err := proto.Unmarshal(record, &hand)
 		if err != nil {
